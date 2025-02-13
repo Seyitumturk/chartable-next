@@ -19,19 +19,26 @@ export async function GET(req: Request) {
     }
 
     const projects = await Project.find({ userId: user._id })
-      .sort({ createdAt: -1 })
-      .select('_id title diagramType createdAt history');
+      .sort({ updatedAt: -1 })
+      .select('_id title diagramType description updatedAt history');
 
-    const formattedProjects = projects.map(project => ({
-      _id: project._id,
-      title: project.title,
-      diagramType: project.diagramType,
-      createdAt: project.createdAt,
-      latestDiagramImg: project.history[0]?.diagram_img || null
-    }));
-
-    return NextResponse.json(formattedProjects);
-
+    return NextResponse.json({
+      projects: projects.map(project => ({
+        _id: project._id,
+        title: project.title,
+        diagramType: project.diagramType,
+        description: project.description,
+        updatedAt: project.updatedAt,
+        history: project.history?.[0] ? [{
+          diagram_img: project.history[0].diagram_img,
+          diagram: project.history[0].diagram
+        }] : []
+      })),
+      user: {
+        _id: user._id,
+        wordCountBalance: user.wordCountBalance
+      }
+    });
   } catch (error) {
     console.error('Error in projects API:', error);
     return NextResponse.json(

@@ -31,7 +31,7 @@ export default function DiagramEditor({ projectId, diagramType, initialDiagram }
   }, [initialDiagram]);
 
   // Enhanced rendering with error handling and retries
-  const renderDiagram = async (diagramText: string): Promise<boolean> => {
+  const renderDiagram = async (diagramText: string): Promise<string> => {
     const maxRetries = 3;
     let currentTry = 0;
 
@@ -46,7 +46,7 @@ export default function DiagramEditor({ projectId, diagramType, initialDiagram }
         
         const { svg } = await mermaid.render('diagram-' + Date.now(), diagramText);
         setSvgOutput(svg);
-        return true;
+        return svg;
       } catch (err) {
         console.error(`Failed to render diagram (attempt ${currentTry + 1}/${maxRetries}):`, err);
         currentTry++;
@@ -55,7 +55,7 @@ export default function DiagramEditor({ projectId, diagramType, initialDiagram }
         }
       }
     }
-    return false;
+    throw new Error('Failed to render diagram after multiple attempts');
   };
 
   // Buffered update function for smoother streaming
@@ -172,27 +172,42 @@ export default function DiagramEditor({ projectId, diagramType, initialDiagram }
         const { done, value } = await reader.read();
         if (done) break;
 
-        // Decode the stream chunk and split into SSE messages
         const chunk = decoder.decode(value);
         const messages = chunk
           .split('\n\n')
           .filter(msg => msg.trim().startsWith('data: '))
           .map(msg => JSON.parse(msg.replace('data: ', '')));
 
-        // Process each message
         for (const message of messages) {
           if (message.mermaidSyntax) {
             accumulatedDiagram = message.mermaidSyntax;
             updateDiagramWithBuffer(accumulatedDiagram);
             
             if (message.isComplete) {
-              // Final update
-              setCurrentDiagram(accumulatedDiagram);
-              await renderDiagram(accumulatedDiagram);
-              setPrompt('');
-              
-              // Update the UI immediately without refresh
-              router.refresh();
+              try {
+                // First render the diagram to get the SVG
+                const renderedSvg = await renderDiagram(accumulatedDiagram);
+                
+                // Save both the Mermaid code and the rendered SVG
+                await fetch(`/api/projects/${projectId}/diagram`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    diagram: accumulatedDiagram,        // This is the Mermaid code
+                    diagram_img: renderedSvg,           // This is the actual SVG output
+                    prompt: prompt,
+                  }),
+                });
+
+                setCurrentDiagram(accumulatedDiagram);
+                setPrompt('');
+                router.refresh();
+              } catch (err) {
+                console.error('Failed to save diagram:', err);
+                setError('Failed to save diagram');
+              }
               break;
             }
           }
@@ -202,7 +217,6 @@ export default function DiagramEditor({ projectId, diagramType, initialDiagram }
       setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {
       setIsGenerating(false);
-      // Clear any pending buffer updates
       if (bufferTimeoutRef.current) {
         clearTimeout(bufferTimeoutRef.current);
       }

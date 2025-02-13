@@ -6,6 +6,7 @@ import User from '@/models/User';
 import Project, { IProject } from '@/models/Project';
 import DiagramEditor from './editor';
 import { Types } from 'mongoose';
+import { notFound } from 'next/navigation';
 
 interface MongoHistoryItem {
   _id: Types.ObjectId;
@@ -30,6 +31,7 @@ interface SerializedProject {
   title: string;
   diagramType: string;
   createdAt: string;
+  currentDiagram: string;
   history: SerializedHistoryItem[];
 }
 
@@ -46,6 +48,7 @@ interface LeanProject {
     updateType: 'chat' | 'code' | 'reversion';
     updatedAt: Date;
   }[];
+  diagramSVG?: string;
 }
 
 async function getProject(userId: string, projectId: string) {
@@ -56,17 +59,23 @@ async function getProject(userId: string, projectId: string) {
     throw new Error('User not found');
   }
 
-  const rawProject = await Project.findOne({ _id: projectId, userId: user._id }).lean() as unknown as LeanProject;
+  const rawProject = await Project.findOne({ 
+    _id: projectId, 
+    userId: user._id 
+  }).lean() as unknown as LeanProject;
+  
   if (!rawProject) {
     throw new Error('Project not found');
   }
 
-  // Properly serialize the project data
+  // Include the current diagram in the response
   const serializedProject: SerializedProject = {
     _id: rawProject._id.toString(),
     title: rawProject.title,
     diagramType: rawProject.diagramType,
     createdAt: rawProject.createdAt.toISOString(),
+    // Include the latest diagram from history or diagramSVG
+    currentDiagram: rawProject.diagramSVG || rawProject.history?.[0]?.diagram || '',
     history: (rawProject.history || []).map((item) => ({
       _id: item._id.toString(),
       prompt: item.prompt || '',
@@ -90,13 +99,37 @@ async function getProject(userId: string, projectId: string) {
 
 export default async function ProjectPage({ params }: { params: { id: string } }) {
   const { userId } = await auth();
-  
   if (!userId) {
     redirect('/login');
   }
 
-  const { project, user } = await getProject(userId, params.id);
-  const currentDiagram = project.history[0]?.diagram || '';
+  await connectDB();
+  const user = await User.findOne({ clerkId: userId });
+  if (!user) {
+    redirect('/login');
+  }
+
+  // Convert MongoDB document to plain object and serialize _id
+  const project = await Project.findOne({ _id: params.id, userId: user._id });
+  if (!project) {
+    notFound();
+  }
+
+  // Serialize the project data to plain objects
+  const serializedProject = {
+    _id: project._id.toString(),
+    title: project.title,
+    diagramType: project.diagramType,
+    currentDiagram: project.history?.[0]?.diagram || '',
+    history: project.history?.map(item => ({
+      _id: item._id.toString(),
+      prompt: item.prompt,
+      diagram: item.diagram,
+      diagram_img: item.diagram_img,
+      updateType: item.updateType,
+      updatedAt: item.updatedAt.toISOString()
+    })) || []
+  };
 
   return (
     <main className="min-h-screen bg-background">
@@ -106,10 +139,10 @@ export default async function ProjectPage({ params }: { params: { id: string } }
           <div className="flex items-center space-x-4">
             <Link href="/projects" className="flex items-center space-x-2 hover:opacity-80">
               <img src="/logo-green.svg" alt="Chartable Logo" className="h-6 w-6" />
-              <span className="font-bold">{project.title}</span>
+              <span className="font-bold">{serializedProject.title}</span>
             </Link>
             <span className="text-sm text-gray-400">
-              {project.diagramType} diagram • Created {new Date(project.createdAt).toLocaleDateString()}
+              {serializedProject.diagramType} diagram • Created {new Date(serializedProject.createdAt).toLocaleDateString()}
             </span>
           </div>
           <div className="flex items-center space-x-4">
@@ -126,9 +159,9 @@ export default async function ProjectPage({ params }: { params: { id: string } }
 
       {/* Editor */}
       <DiagramEditor
-        projectId={project._id}
-        diagramType={project.diagramType}
-        initialDiagram={currentDiagram}
+        projectId={serializedProject._id}
+        diagramType={serializedProject.diagramType}
+        initialDiagram={serializedProject.currentDiagram}
       />
     </main>
   );

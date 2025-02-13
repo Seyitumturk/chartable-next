@@ -34,8 +34,21 @@ interface UserResponse {
   wordCountBalance: number;
 }
 
+interface SerializedProject {
+  _id: string;
+  title: string;
+  diagramType: string;
+  description?: string;
+  updatedAt: string;
+  diagramSVG?: string;
+  history?: Array<{
+    diagram_img?: string;
+    diagram?: string;
+  }>;
+}
+
 interface GetProjectsResponse {
-  projects: ProjectResponse[];
+  projects: SerializedProject[];
   user: UserResponse;
 }
 
@@ -43,7 +56,7 @@ export async function getProjects(): Promise<GetProjectsResponse> {
   const { userId } = await auth();
   
   if (!userId) {
-    redirect('/login');
+    throw new Error('Unauthorized');
   }
 
   await connectDB();
@@ -53,23 +66,26 @@ export async function getProjects(): Promise<GetProjectsResponse> {
     throw new Error('User not found');
   }
 
-  const rawProjects = await Project.find({ userId: user._id })
+  const projects = await Project.find({ userId: user._id })
     .sort({ updatedAt: -1 })
-    .lean();
+    .select('_id title diagramType description updatedAt diagramSVG history');
 
-  const projects = rawProjects.map(project => {
-    const typedProject = project as unknown as ProjectDocument;
-    return {
-      ...project,
-      _id: typedProject._id.toString(),
-      userId: typedProject.userId.toString(),
-      createdAt: typedProject.createdAt.toISOString(),
-      updatedAt: typedProject.updatedAt.toISOString(),
-    } as ProjectResponse;
-  });
+  // Serialize the projects data
+  const serializedProjects: SerializedProject[] = projects.map(project => ({
+    _id: project._id.toString(),
+    title: project.title,
+    diagramType: project.diagramType,
+    description: project.description,
+    updatedAt: project.updatedAt.toISOString(),
+    diagramSVG: project.diagramSVG,
+    history: project.history?.[0] ? [{
+      diagram_img: project.history[0].diagram_img,
+      diagram: project.history[0].diagram
+    }] : []
+  }));
 
   return {
-    projects,
+    projects: serializedProjects,
     user: {
       _id: user._id.toString(),
       wordCountBalance: user.wordCountBalance,

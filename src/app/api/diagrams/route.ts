@@ -9,6 +9,7 @@ import yaml from 'yaml';
 import fs from 'fs';
 import path from 'path';
 import mongoose from 'mongoose';
+import mermaid from 'mermaid';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -130,60 +131,57 @@ export async function POST(req: Request) {
               // Check for the end of Mermaid syntax
               if (currentChunk.includes('```') && isCollectingDiagram) {
                 diagram += currentChunk.substring(0, currentChunk.indexOf('```'));
-                isCollectingDiagram = false;
 
-                // Process any remaining lines in the buffer
-                if (lineBuffer.length > 0) {
-                  diagram += lineBuffer.join('\n') + '\n';
-                  await new Promise(resolve => setTimeout(resolve, ARTIFICIAL_DELAY));
+                // Initialize mermaid and render the diagram to SVG
+                mermaid.initialize({
+                  startOnLoad: false,
+                  theme: 'neutral',
+                  securityLevel: 'loose',
+                  fontFamily: 'var(--font-geist-sans)',
+                });
+
+                try {
+                  // Render the diagram to get the SVG
+                  const { svg } = await mermaid.render('diagram-' + Date.now(), diagram.trim());
+
+                  // Save both the diagram code and the rendered SVG
+                  project.history.unshift({
+                    _id: new mongoose.Types.ObjectId(),
+                    prompt: textPrompt,
+                    diagram: diagram.trim(),          // Save the Mermaid code
+                    diagram_img: svg,                 // Save the rendered SVG
+                    updateType: 'chat',
+                    updatedAt: new Date()
+                  });
+
+                  // Also save the SVG as the current diagram
+                  project.diagramSVG = svg;
+
+                  if (project.history.length > 30) {
+                    project.history.pop();
+                  }
+
+                  project.markModified('history');
+                  await project.save();
+
+                  // Update user's token balance
+                  await User.findByIdAndUpdate(user._id, {
+                    $inc: { wordCountBalance: -1000 }
+                  });
+
+                  // Send complete message
                   controller.enqueue(
-                    `data: ${JSON.stringify({ mermaidSyntax: diagram, isComplete: false })}\n\n`
+                    `data: ${JSON.stringify({ 
+                      mermaidSyntax: diagram.trim(), 
+                      isComplete: true,
+                      gptResponseId: gptResponse._id.toString()
+                    })}\n\n`
                   );
-                  lineBuffer = [];
+                  break;
+                } catch (error) {
+                  console.error('Failed to render diagram:', error);
+                  controller.error(error);
                 }
-
-                // Add final delay before completion
-                await new Promise(resolve => setTimeout(resolve, 800));
-
-                // Save the diagram
-                const gptResponse = new GptResponse({
-                  prompt: textPrompt,
-                  gptResponse: diagram,
-                  extractedSyntax: diagram.trim(),
-                });
-                await gptResponse.save();
-
-                project.history.unshift({
-                  _id: new mongoose.Types.ObjectId(),
-                  prompt: textPrompt,
-                  diagram: diagram.trim(),
-                  diagram_img: diagram.trim(),
-                  updateType: 'chat',
-                  updatedAt: new Date()
-                });
-
-                if (project.history.length > 30) {
-                  project.history.pop();
-                }
-
-                project.diagramSVG = diagram.trim();
-                project.markModified('history');
-                await project.save();
-
-                // Update user's token balance
-                await User.findByIdAndUpdate(user._id, {
-                  $inc: { wordCountBalance: -1000 }
-                });
-
-                // Send complete message
-                controller.enqueue(
-                  `data: ${JSON.stringify({ 
-                    mermaidSyntax: diagram.trim(), 
-                    isComplete: true,
-                    gptResponseId: gptResponse._id.toString()
-                  })}\n\n`
-                );
-                break;
               }
 
               // If we're collecting the diagram and have a complete line

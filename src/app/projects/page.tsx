@@ -20,6 +20,7 @@ interface Project {
     diagram_img?: string;
     diagram: string;
   }>;
+  diagramSVG?: string;
 }
 
 interface User {
@@ -156,9 +157,11 @@ export default function ProjectsPage() {
               >
                 {/* Diagram Preview */}
                 <div className="h-48 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900/50 dark:to-gray-800/50 border-b dark:border-gray-700/50 p-4 flex items-center justify-center relative overflow-hidden group-hover:from-gray-100 group-hover:to-gray-200 dark:group-hover:from-gray-800/50 dark:group-hover:to-gray-700/50 transition-all duration-300">
-                  {project.history?.[0]?.diagram_img ? (
+                  {(project.diagramSVG || project.history?.[0]?.diagram_img) ? (
                     <div 
-                      dangerouslySetInnerHTML={{ __html: project.history[0].diagram_img }}
+                      dangerouslySetInnerHTML={{ 
+                        __html: (project.diagramSVG || project.history?.[0]?.diagram_img || '')
+                      }}
                       className="w-full h-full flex items-center justify-center transform group-hover:scale-105 transition-transform duration-300"
                     />
                   ) : (
